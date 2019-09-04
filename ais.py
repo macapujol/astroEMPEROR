@@ -16,6 +16,13 @@ if True:
     import matplotlib.pyplot as plt
     import matplotlib.mlab as mlab
 
+
+    import dynesty
+    import os
+    import contextlib
+    import pickle
+    import copy
+
     import emcee
     from emcee import PTSampler
     import multiprocessing
@@ -162,6 +169,8 @@ class EMPIRE:
         self.burn_out = self.nsteps // 2
         self.RV = False
         self.PM = False
+
+        self.ENGINE = 'emcee'
 
         self.START = chrono.time()
         self.VINES = True  # jaja
@@ -688,6 +697,157 @@ class EMPIRE:
         return thetas_raw, ajuste_raw, thetas_hen, ajuste_hen, p, lnprob, lnlike, posteriors, self.sampler.betas, interesting_thetas, interesting_posts, sigmas, sigmas_raw
         '''
 
+
+    def dynesty(self, *args):
+        if args:
+            pos0, kplan, sigmas_raw, logl, logp = args
+
+        # ndat = len(self.time)  # DEL
+        ndim = self.theta.ndim_
+
+        def starinfo():
+            colors = ['red', 'green', 'blue', 'yellow',
+                      'grey', 'magenta', 'cyan', 'white']
+            c = sp.random.randint(0, 7)
+            print(
+                colored('\n    ###############################################', colors[c]))
+            print(
+                colored('    #                                             #', colors[c]))
+            print(
+                colored('    #                                             #', colors[c]))
+            print(
+                colored('    #                 E M P E R 0 R               #', colors[c]))
+            print(
+                colored('    #                                             #', colors[c]))
+            print(
+                colored('    #                                             #', colors[c]))
+            print(
+                colored('    ###############################################', colors[c]))
+            print(colored('Exoplanet Mcmc Parallel tEmpering Radial vel0city fitteR',
+                          colors[sp.random.randint(0, 7)]))
+            logdat = '\n\nStar Name                         : ' + self.starname
+            logdat += '\nTemperatures, Walkers, Steps      : ' + \
+                str((self.ntemps, self.nwalkers, self.nsteps))
+            if self.RV:
+                logdat += '\nN Instruments, K planets, N data  : ' + \
+                    str((self.nins, kplan, self.ndat))
+                logdat += '\nN Moving Average per instrument   : ' + \
+                    str(self.MOAV)
+            if self.PM:
+                logdat += '\nN Instruments, K planets, N data  : ' + \
+                    str((self.nins_pm, kplan, self.ndat_pm))
+                logdat += '\nN Moving Average per instrument   : ' + \
+                    str(self.MOAV_pm)
+                logdat += '\nN of data for Photometry          : ' + \
+                    str(self.ndat_pm)
+            logdat += '\nN Number of Dimensions            : ' + str(ndim)
+            logdat += '\nBeta Detail                       : ' + \
+                str(self.betas)
+            logdat += '\n-----------------------------------------------------'
+            print(logdat)
+            pass
+
+        starinfo()
+        # '''
+        #from emperors_library import logp_rv
+        print(str(self.PM), ndim, 'self.pm y ndim')  # PMPMPM
+
+        logp_params = [self.theta.list_, self.theta.ndim_, self.coordinator]
+
+        if self.RV:
+            logl_params_aux = sp.array([self.time, self.rv, self.err, self.ins,
+                                        self.staract, self.starflag, kplan, self.nins,
+                                        self.MOAV, self.totcornum, self.ACC, self.anticoor])  # anticoor here too? DEL
+
+            logl_params = [self.theta.list_, self.anticoor, logl_params_aux]
+
+            dynesty_nthreads = multiprocessing.cpu_count()
+            nthreads = int(dynesty_nthreads)
+            with contextlib.closing(multiprocessing.Pool(processes=nthreads)) as executor:
+                self.sampler = dynesty.NestedSampler(logl, logp, ndim,
+                ptform_args=[empmir.dlogp,logp_params],
+                logl_arfs=[empmir.dlogl,logl_params], nlive=200, bound='multi',
+                sample='rwalk',pool=executor,queue_size=nthreads
+                )
+                self.sampler.run_nested(dlogz=0.1)
+                results = self.sampler.results
+                filename = 'dynestyfile.pkl'
+                pickle.dump(results, open(filename, 'wb'))
+            with open(filename, 'rb') as f:
+                results = pickle.load(f)
+            logz = results['logz']
+            samples = results['samples']
+            best_logz = sp.argmax(logz)
+
+
+
+        if self.PM:
+            logl_params_aux = sp.array([self.time_pm, self.rv_pm, self.err_pm,
+                                        self.ins_pm, kplan, self.nins_pm,
+                                        self.batman_ldn, self.batman_m, self.batman_p,
+                                        self.emperors_gp, self.gaussian_processor])
+
+            logl_params = [self.theta.list_, self.anticoor, logl_params_aux]
+
+            self.sampler = PTSampler(self.ntemps, self.nwalkers, ndim, logl, logp,
+                                     loglargs=[
+                                         empmir.neo_logl_pm, logl_params],
+                                     logpargs=[
+                                         empmir.neo_logp_pm, logp_params],
+                                     threads=self.cores, betas=self.betas)
+
+        # RVPM THINGY
+
+        # print('\n --------------------- BURN IN --------------------- \n')
+        #
+        # pbar = tqdm(total=self.burn_out)
+        # for p, lnprob, lnlike in self.sampler.sample(pos0, iterations=self.burn_out):
+        #     pbar.update(1)
+        #     pass
+        # pbar.close()
+        #
+        # p0, lnprob0, lnlike0 = p, lnprob, lnlike
+        # print("\nMean acceptance fraction: {0:.3f}".format(
+        #     sp.mean(self.sampler.acceptance_fraction)))
+        # emplib.ensure(sp.mean(self.sampler.acceptance_fraction) !=
+        #               0, 'Mean acceptance fraction = 0 ! ! !', fault)
+        # self.sampler.reset()
+        #
+        # print('\n ---------------------- CHAIN ---------------------- \n')
+        # pbar = tqdm(total=self.nsteps)
+        # for p, lnprob, lnlike in self.sampler.sample(p0, lnprob0=lnprob0,
+        #                                              lnlike0=lnlike0,
+        #                                              iterations=self.nsteps,
+        #                                              thin=self.thin):
+        #     pbar.update(1)
+        #     pass
+        # pbar.close()
+        # # '''
+        #
+        # emplib.ensure(self.sampler.chain.shape == (self.ntemps, self.nwalkers, self.nsteps / self.thin, ndim),
+        #               'something really weird happened', fault)
+        # print("\nMean acceptance fraction: {0:.3f}".format(
+        #     sp.mean(self.sampler.acceptance_fraction)))
+
+        pass
+
+        '''
+        thetas_raw = copy.deepcopy(samples)
+        thetas_hen = empmir.henshin(samples, kplanets)
+        ajuste_hen = thetas_hen[best_logz]
+        ajuste_raw = thetas_raw[best_logz]
+        interesting_thetas = thetas_hen
+        interesting_thetas_raw = thetas_raw
+        interesting_logz = logz
+        sigmas = sp.array([ sp.std(interesting_thetas[:, i]) for i in range(ndim) ])
+        sigmas_raw = sp.array([ sp.std(interesting_thetas_raw[:, i]) for i in range(ndim) ])
+        return thetas_raw, ajuste_raw, thetas_hen, ajuste_hen, logz, interesting_thetas, interesting_logz, sigmas, sigmas_raw
+        '''
+
+
+
+
+
     def conquer(self, from_k, to_k, logl=logl, logp=logp, BOUND=sp.array([])):
         # 1 handle data
         # 2 set adecuate model
@@ -972,7 +1132,10 @@ class EMPIRE:
             # real chain
             sigmas, sigmas_raw = sp.zeros(
                 self.theta.ndim_), sp.zeros(self.theta.ndim_)
-            self.MCMC(self.pos0, kplan, sigmas_raw, logl, logp)
+            if self.ENGINE == 'emcee':
+                self.MCMC(self.pos0, kplan, sigmas_raw, logl, logp)
+            if self.ENGINE == 'dynesty':
+                self.dynesty(self.pos0, kplan, sigmas_raw, logl, logp)
             # '''
             # raise Exception('DEBUG')  # DEL
         # 5 get stats (and model posterior)
@@ -1149,72 +1312,4 @@ em.changes_list = {0: ['Period', 'lims', 4.11098843, 4.11105404],
                    9: ['Longitude_2', 'lims', -2.48303912e-01,  -7.10641857e-02]
                    }
 
-'''
-em.changes_list = {0:['t0', 'lims', 2456915.67, 2456915.73],
-                   1:['Planet Radius', 'lims', 0.05, 0.09],
-                   2:['Period', 'prior', 'fixed'],
-                   3:['Period', 'val', 24.73712],
-                   4:['SemiMajor Axis', 'prior', 'fixed'],
-                   5:['SemiMajor Axis', 'val', 101.1576001138329],
-                   6:['Inclination', 'prior', 'fixed'],
-                   7:['Inclination', 'val', 89.912],
-                   8:['Eccentricity', 'prior', 'fixed'],
-                   9:['Eccentricity', 'val', 0.],
-                   10:['Longitude', 'prior', 'fixed'],
-                   11:['Longitude', 'val', 90.],
-                   12:['coef1', 'prior', 'fixed'],
-                   13:['coef1', 'val', 0.1],
-                   14:['coef2', 'prior', 'fixed'],
-                   15:['coef2', 'val', 0.3]}
-'''
 em.conquer(1, 1)
-
-'''
-em.changes_list = {:['t0', 'prior', 'fixed'],
-                   :['t0', 'val', 2456915.6997],
-                   :['Planet Radius', 'prior', 'fixed'],
-                   :['Planet Radius', 'val', 0.0704],
-                   :['Period', 'prior', 'fixed'],
-                   :['Period', 'val', 24.73712],
-                   :['SemiMajor Axis', 'prior', 'fixed'],
-                   :['SemiMajor Axis', 'val', 101.1576001138329],
-                   :['Inclination', 'prior', 'fixed'],
-                   :['Inclination', 'val', 89.912],
-                   :['Eccentricity', 'prior', 'fixed'],
-                   :['Eccentricity', 'val', 0.],
-                   :['Longitude', 'prior', 'fixed'],
-                   :['Longitude', 'val', 90.],
-                   :['coef1', 'prior', 'fixed'],
-                   :['coef1', 'val', 0.1],
-                   :['coef2', 'prior', 'fixed'],
-                   :['coef2', 'val', 0.3]}
-'''
-
-'''
-em.changes_list = {0:['Period', 'lims', 4.0943445, 4.1271343],
-                   1:['Period_2', 'lims', 3.38, 3.42]
-                   }
-em.changes_list = {0:['Period', 'prior', 'fixed'],
-                   1:['Period', 'val', 3.93],
-                   2:['Inclination', 'prior', 'fixed'],
-                   3:['Inclination', 'val', 88.946],
-                   4:['Eccentricity', 'prior', 'fixed'],
-                   5:['Eccentricity', 'val', 0.],
-                   6:['Longitude', 'prior', 'fixed'],
-                   7:['Longitude', 'val', 0.],
-                   8:['t0', 'prior', 'fixed'],
-                   9:['t0', 'val', 2458517.99]}
-'''
-
-
-#
-
-#x, y, y_error = em.time_pm, em.rv_pm, em.err_pm
-
-'''
-array(['t0', 'Period', 'Planet Radius', 'SemiMajor Axis', 'Inclination',
-       'Eccentricity', 'Longitude', 'coef1', 'coef2', 'Jitter',
-       'kernel0_0', 'kernel0_1'], dtype='<U14')
-array(['213482777044.7721', '24.73712', '1167549.8787819578', '-inf',
-       '89.912', '0.0', '0.0', '0.1', '0.3', '-11.316116337221487',
-       '24.096249121805645', '32.28733028116761']

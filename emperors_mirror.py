@@ -5,6 +5,7 @@ import scipy as sp
 from PyAstronomy.pyasl import MarkleyKESolver
 from emperors_library import normal_pdf
 import batman
+import scipy.stats as st
 
 def RV_model(THETA, time, kplanets):
     modelo = 0.0
@@ -306,6 +307,10 @@ def hou_cov(x, y, lim):
     else:
         return -sp.inf
 
+def transform_loguniform(x, a, b):
+    la = sp.log(a)
+    lb = sp.log(b)
+    return sp.exp(la+x*(lb-la))
 
 D = {'uniform':uniform,
      'flat':flat,
@@ -320,6 +325,21 @@ D = {'uniform':uniform,
      'joined':joined,
      'hou_cov':hou_cov
      }
+
+dynesty_D = {'uniform':st.uniform.ppf,
+     'flat':st.uniform.ppf,
+     'jeffreys':transform_loguniform,
+     'normal':st.normal.ppf,
+     'uniform_spe':st.uniform.ppf,
+     'uniform_spe_a':st.uniform.ppf,
+     'uniform_spe_b':st.uniform.ppf,
+     'uniform_spe_c':st.uniform.ppf,
+     'uniform_spe_d':st.uniform.ppf,
+     'fixed':fixed,
+     'joined':joined,
+     'hou_cov':hou_cov
+     }
+
 
 def neo_logp_rv(theta, params):
     _theta, ndim, C = params
@@ -563,6 +583,105 @@ def neo_model_pm(t, ld_mod, ldn):
     params.u = ld_coefs
     model = batman.TransitModel(params, t)
     return model, params
+
+
+def dlogl_rv(theta, paramis):
+    # PARAMS DEFINITIONS
+    _t, AC, params = paramis
+
+    time, rv, err = params[0], params[1], params[2]
+    ins, staract, starflag = params[3], params[4], params[5]
+    kplanets, nins, MOAV = params[6], params[7], params[8]
+    totcornum, ACC = params[9], params[10]
+    i, lnl = 0, 0
+    ndat = len(time)
+    jitter, offset = sp.zeros(ndat), sp.ones(ndat)*sp.inf
+
+    macoef, timescale = sp.array([sp.zeros(ndat) for i in range(sp.amax(MOAV))]), sp.array([sp.zeros(ndat) for i in range(sp.amax(MOAV))])
+
+    model_params = kplanets * 5
+    ins_params = (nins + sp.sum(MOAV)) * 2
+    acc_params = ACC
+
+    # THETA CORRECTION FOR FIXED THETAS
+    for a in AC:
+        theta = sp.insert(theta, a, _t[a].val)
+
+    if ACC > 0:  # recheck this at some point # DEL
+        ACC = sp.polyval(sp.r_[0, theta[model_params:model_params+ACC]], (time-sp.amin(time)))
+
+
+    # SETUP
+
+    residuals = sp.zeros(ndat)
+
+    for i in range(ndat):
+        jitpos = int(model_params + acc_params + (ins[i] + sp.sum(MOAV[:int(ins[i])])) * 2)
+        jitter[i], offset[i] = theta[jitpos], theta[jitpos + 1]  #
+        for jj in range(MOAV[int(ins[i])]):
+            macoef[jj][i] = theta[jitpos + 2*(jj+1)]
+            timescale[jj][i] = theta[jitpos + 2*(jj+1) + 1]
+    a1 = (theta[:model_params])
+#    if kplanets > 0:
+#        raise Exception('destroy')
+
+    # CHECK THIS CHECK THIS
+    if totcornum:
+        #print 'SE ACTIBOY'
+        COR = sp.array([sp.array([sp.zeros(ndat) for k in range(len(starflag[i]))]) for i in range(len(starflag))])
+        SA = theta[model_params+acc_params+ins_params:]
+
+        assert len(SA) == totcornum, 'error in correlations'
+        AR = 0.0  # just to remember to add this
+        counter = -1
+
+        for i in range(nins):
+            for j in range(len(starflag[i])):
+                counter += 1
+                passer = -1
+                for k in range(ndat):
+                    if starflag[i][j] == ins[k]:  #
+                        passer += 1
+                        COR[i][j][k] = SA[counter] * staract[i][j][passer]
+
+        FMC = 0
+        for i in range(len(COR)):
+            for j in range(len(COR[i])):
+                FMC += COR[i][j]
+    else:
+        #print 'NO SE AKTIBOY'
+        FMC = 0
+
+    MODEL = RV_model(a1, time, kplanets) + offset + ACC + FMC
+
+    #MA = sp.zeros((sp.amax(MOAV),ndat))
+    # something awfully weird going out here
+    #'''
+    residuals = rv - MODEL
+    for i in range(ndat):
+        for c in range(MOAV[int(ins[i])]):
+            if i > c:
+                MA = macoef[c][i] * sp.exp(-sp.fabs(time[i-1-c] - time[i]) / timescale[c][i]) * residuals[i-1-c]
+                residuals[i] -= MA
+    #'''
+    #if kplanets>0:
+    #    raise Exception('debug')
+    inv_sigma2 = 1.0 / (err**2 + jitter**2)
+    lnl = sp.sum(residuals ** 2 * inv_sigma2 - sp.log(inv_sigma2)) + sp.log(2*sp.pi) * ndat
+    return -0.5 * lnl
+
+def dlogp(theta, params):
+    _theta, ndim, C = params
+    theta2 = sp.zeros(ndim)
+    for j in range(ndim):
+        theta2[j] = dynesty_D[_theta[C[j]].prior](theta[j], _theta[C[j]].lims, _theta[C[j]].args)
+        if (_theta[C[j]].prior == 'uniform_spe_c' and
+            _theta[C[j+1]].prior != 'fixed'):
+            theta2[j] = dynesty_D['normal'](theta[j]**2+theta[j+1]**2, [0, 1], [0., 0.1**2])
+        if (_theta[C[j]].prior == 'uniform_spe_a' and
+            _theta[C[j+1]].prior != 'fixed'):
+            theta2[j] = dynesty_D['uniform'](theta[j]**2+theta[j+1]**2, _theta[C[j]].args, None)
+    return theta2
 
 K = {'Constant': 1. ** 2,
      'ExpSquaredKernel': kernels.ExpSquaredKernel(metric=1.**2),

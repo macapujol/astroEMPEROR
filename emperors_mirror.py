@@ -307,6 +307,19 @@ def hou_cov(x, y, lim):
     else:
         return -sp.inf
 
+def dyn_uniform(x, lims, args):
+    a = lims[0]
+    b = lims[1]
+    return st.uniform.ppf(x, a, b-a)
+
+
+def dyn_normal(x, lims, args):
+    mean, var = args[0], args[1]
+    a = (lims[0]-mean)/var
+    b = (lims[1]-mean)/var
+    u = st.truncnorm.ppf(x, a, b, loc=mean, scale=var)
+    return u
+
 def transform_loguniform(x, a, b):
     la = sp.log(a)
     lb = sp.log(b)
@@ -326,15 +339,15 @@ D = {'uniform':uniform,
      'hou_cov':hou_cov
      }
 
-dynesty_D = {'uniform':st.uniform.ppf,
-     'flat':st.uniform.ppf,
+dynesty_D = {'uniform':dyn_uniform,
+     'flat':dyn_uniform,
      'jeffreys':transform_loguniform,
-     'normal':st.normal.ppf,
-     'uniform_spe':st.uniform.ppf,
-     'uniform_spe_a':st.uniform.ppf,
-     'uniform_spe_b':st.uniform.ppf,
-     'uniform_spe_c':st.uniform.ppf,
-     'uniform_spe_d':st.uniform.ppf,
+     'normal':dyn_normal,
+     'uniform_spe':dyn_uniform,
+     'uniform_spe_a':dyn_uniform,
+     'uniform_spe_b':dyn_uniform,
+     'uniform_spe_c':dyn_uniform,
+     'uniform_spe_d':dyn_uniform,
      'fixed':fixed,
      'joined':joined,
      'hou_cov':hou_cov

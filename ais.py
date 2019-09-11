@@ -748,8 +748,7 @@ class EMPIRE:
             pass
 
         starinfo()
-        # '''
-        #from emperors_library import logp_rv
+
         print(str(self.PM), ndim, 'self.pm y ndim')  # PMPMPM
 
         logp_params = [self.theta.list_, self.theta.ndim_, self.coordinator]
@@ -765,22 +764,13 @@ class EMPIRE:
             nthreads = int(dynesty_nthreads)
             with contextlib.closing(multiprocessing.Pool(processes=nthreads)) as executor:
                 self.sampler = dynesty.NestedSampler(logl, logp, ndim,
-                ptform_args=[empmir.dlogp,logp_params],
-                logl_arfs=[empmir.dlogl,logl_params], nlive=200, bound='multi',
+                ptform_args=[empmir.dlogp_rv,logp_params],
+                logl_arfs=[empmir.dlogl_rv,logl_params], nlive=200, bound='multi',
                 sample='rwalk',pool=executor,queue_size=nthreads
                 )
                 self.sampler.run_nested(dlogz=0.1)
-                results = self.sampler.results
-                filename = 'dynestyfile.pkl'
-                pickle.dump(results, open(filename, 'wb'))
-            with open(filename, 'rb') as f:
-                results = pickle.load(f)
-            logz = results['logz']
-            samples = results['samples']
-            best_logz = sp.argmax(logz)
 
-
-
+        #Aun no se modifica esto, sigue para mcmc
         if self.PM:
             logl_params_aux = sp.array([self.time_pm, self.rv_pm, self.err_pm,
                                         self.ins_pm, kplan, self.nins_pm,
@@ -796,56 +786,7 @@ class EMPIRE:
                                          empmir.neo_logp_pm, logp_params],
                                      threads=self.cores, betas=self.betas)
 
-        # RVPM THINGY
-
-        # print('\n --------------------- BURN IN --------------------- \n')
-        #
-        # pbar = tqdm(total=self.burn_out)
-        # for p, lnprob, lnlike in self.sampler.sample(pos0, iterations=self.burn_out):
-        #     pbar.update(1)
-        #     pass
-        # pbar.close()
-        #
-        # p0, lnprob0, lnlike0 = p, lnprob, lnlike
-        # print("\nMean acceptance fraction: {0:.3f}".format(
-        #     sp.mean(self.sampler.acceptance_fraction)))
-        # emplib.ensure(sp.mean(self.sampler.acceptance_fraction) !=
-        #               0, 'Mean acceptance fraction = 0 ! ! !', fault)
-        # self.sampler.reset()
-        #
-        # print('\n ---------------------- CHAIN ---------------------- \n')
-        # pbar = tqdm(total=self.nsteps)
-        # for p, lnprob, lnlike in self.sampler.sample(p0, lnprob0=lnprob0,
-        #                                              lnlike0=lnlike0,
-        #                                              iterations=self.nsteps,
-        #                                              thin=self.thin):
-        #     pbar.update(1)
-        #     pass
-        # pbar.close()
-        # # '''
-        #
-        # emplib.ensure(self.sampler.chain.shape == (self.ntemps, self.nwalkers, self.nsteps / self.thin, ndim),
-        #               'something really weird happened', fault)
-        # print("\nMean acceptance fraction: {0:.3f}".format(
-        #     sp.mean(self.sampler.acceptance_fraction)))
-
         pass
-
-        '''
-        thetas_raw = copy.deepcopy(samples)
-        thetas_hen = empmir.henshin(samples, kplanets)
-        ajuste_hen = thetas_hen[best_logz]
-        ajuste_raw = thetas_raw[best_logz]
-        interesting_thetas = thetas_hen
-        interesting_thetas_raw = thetas_raw
-        interesting_logz = logz
-        sigmas = sp.array([ sp.std(interesting_thetas[:, i]) for i in range(ndim) ])
-        sigmas_raw = sp.array([ sp.std(interesting_thetas_raw[:, i]) for i in range(ndim) ])
-        return thetas_raw, ajuste_raw, thetas_hen, ajuste_hen, logz, interesting_thetas, interesting_logz, sigmas, sigmas_raw
-        '''
-
-
-
 
 
     def conquer(self, from_k, to_k, logl=logl, logp=logp, BOUND=sp.array([])):
@@ -1134,128 +1075,212 @@ class EMPIRE:
                 self.theta.ndim_), sp.zeros(self.theta.ndim_)
             if self.ENGINE == 'emcee':
                 self.MCMC(self.pos0, kplan, sigmas_raw, logl, logp)
+                self.posteriors = sp.array(
+                    [self.sampler.lnprobability[i].reshape(-1) for i in range(self.ntemps)])
+                self.post_max = sp.amax(self.posteriors[0])
+
+                self.ajuste = self.sampler.flatchain[0][sp.argmax(
+                    self.posteriors[0])]
+
+                # updates values in self.theta.list_ with best of emcee run
+                for i in range(self.theta.ndim_):
+                    self.theta.list_[self.coordinator[i]].val = self.ajuste[i]
+                    print(self.theta.list_[self.coordinator[i]].name, self.theta.list_[
+                          self.coordinator[i]].val)
+
+                # TOP OF THE POSTERIOR
+                cherry_locat = sp.array([max(self.posteriors[temp]) - self.posteriors[temp]
+                                         < self.bayes_factor for temp in sp.arange(self.ntemps)])
+                self.cherry_chain = sp.array(
+                    [self.sampler.flatchain[temp][cherry_locat[temp]] for temp in sp.arange(self.ntemps)])
+                self.cherry_post = sp.array(
+                    [self.posteriors[temp][cherry_locat[temp]] for temp in range(self.ntemps)])
+
+                # sigmas are taken from cold chain
+                self.sigmas = sp.array(
+                    [sp.std(self.cherry_chain[0][:, i]) for i in range(self.theta.ndim_)])
+
+                self.sample_sizes = sp.array(
+                    [len(self.cherry_chain[i]) for i in range(self.ntemps)])
+
+                # ojo esto
+                if self.RV and self.VINES:
+                    '''
+                    henshin actual asume los change of variable (cov) de hou
+                    para todos los parametros... si fixeas cosas no respondo
+                    '''
+                    self.cherry_chain_h = sp.array(
+                        [empmir.henshin(self.cherry_chain[i], kplan) for i in sp.arange(self.ntemps)])
+                    # self.cherry_chain_h = sp.array([self.cherry_chain[temp] for temp in sp.arange(self.ntemps)])  # no se pq doble pero no lo voy a mirar
+                    self.ajuste_h = self.cherry_chain_h[0][sp.argmax(
+                        self.cherry_post[0])]
+
+                if self.MUSIC:
+                    thybiding.play()
+
+                # BIC & AIC
+                if self.RV:
+                    self.NEW_BIC = sp.log(self.ndat) * \
+                        self.theta.ndim_ - 2 * self.post_max
+                    self.OLD_BIC = sp.log(self.ndat) * \
+                        self.theta.ndim_ - 2 * self.oldlogpost
+                    self.NEW_AIC = 2 * self.theta.ndim_ - 2 * self.post_max
+                    self.OLD_AIC = 2 * - 2 * self.oldlogpost
+                if self.PM:
+                    self.NEW_BIC = sp.log(self.ndat_pm) * \
+                        self.theta.ndim_ - 2 * self.post_max
+                    self.OLD_BIC = sp.log(self.ndat_pm) * \
+                        self.theta.ndim_ - 2 * self.oldlogpost
+                    self.NEW_AIC = 2 * self.theta.ndim_ - 2 * self.post_max
+                    self.OLD_AIC = 2 * - 2 * self.oldlogpost
+
+                saveplace = self.mklogfile(kplan)
+                if self.VINES:  # saves chains, posteriors, rv data and log
+                    emplib.instigator(
+                        self.cherry_chain, self.cherry_post, self.all_data,
+                        saveplace
+                    )
+
+                if self.MUSIC:
+                    thybiding.play()
+
+                if self.INPLOT:
+                    pass
+
+                if self.OLD_BIC - self.NEW_BIC < self.BIC:
+                    print(
+                        '\nBayes Information Criteria of %.2f requirement not met ! !' % self.BIC)
+                if self.OLD_AIC - self.NEW_AIC < self.AIC:
+                    print(
+                        '\nAkaike Information Criteria of %.2f requirement not met ! !' % self.AIC)
+
+                print('Max logpost vs. Past max logpost', self.post_max,
+                      self.oldlogpost, self.post_max - self.oldlogpost)
+                print('Old BIC vs New BIC', self.OLD_BIC,
+                      self.NEW_BIC, self.OLD_BIC - self.NEW_BIC)
+                print('Old AIC vs New AIC', self.OLD_AIC,
+                      self.NEW_AIC, self.OLD_AIC - self.NEW_AIC)
+
+                if self.post_max - self.oldlogpost < self.model_comparison:
+                    print('\nBayes Factor of %.2f requirement not met ! !' %
+                          self.model_comparison)
+                    # break
+
+                self.oldlogpost = self.post_max
+
+            # 7 remodel prior, go back to step 2
+
+                self.constrain = [15.9, 84.1]
+                self.constrain = [30.15, 69.85]
+                self.constrain = [38.15, 61.85]
+                if kplan > 0:
+                    for i in range(self.theta.ndim_):
+                        if (self.theta.list_[self.coordinator[i]].prior != 'fixed'
+                                and self.theta.list_[self.coordinator[i]].type == 'keplerian'):
+                            self.theta.list_[self.coordinator[i]].lims = sp.percentile(
+                                self.cherry_chain[0][:, i], self.constrain)
+                            #self.theta.list_[self.coordinator[i]].args = [ajuste[i], sigmas[i]]
+                            pass
+
+                # '''
+                kplan += 1
+
             if self.ENGINE == 'dynesty':
                 self.dynesty(self.pos0, kplan, sigmas_raw, logl, logp)
-            # '''
-            # raise Exception('DEBUG')  # DEL
-        # 5 get stats (and model posterior)
+                results = self.sampler.results
+                filename = 'dynestyfile.pkl'
+                pickle.dump(results, open(filename, 'wb'))
+                with open(filename, 'rb') as f:
+                    results = pickle.load(f)
+                logz = results['logz']
+                logl = results['loglstar']
+                samples = results['samples']
+                best_logz = sp.argmax(logz)
+                self.post_max = sp.amax(logl)
+                self.ajuste = samples[best_logz]
 
-            # posterior handling
+                self.cherry_chain = samples
+                self.cherry_post = logl #por mientras
 
-            self.posteriors = sp.array(
-                [self.sampler.lnprobability[i].reshape(-1) for i in range(self.ntemps)])
-            self.post_max = sp.amax(self.posteriors[0])
+                # sigmas are taken from cold chain
+                self.sigmas = sp.array(
+                    [sp.std(self.cherry_chain[:, i]) for i in range(self.theta.ndim_)])
 
-            self.ajuste = self.sampler.flatchain[0][sp.argmax(
-                self.posteriors[0])]
+                self.sample_sizes = sp.array(
+                    [len(self.cherry_chain[i]) for i in range(self.ntemps)])
 
-            # updates values in self.theta.list_ with best of emcee run
-            for i in range(self.theta.ndim_):
-                self.theta.list_[self.coordinator[i]].val = self.ajuste[i]
-                print(self.theta.list_[self.coordinator[i]].name, self.theta.list_[
-                      self.coordinator[i]].val)
+                # ojo esto
+                if self.RV and self.VINES:
+                    self.cherry_chain_h = empmir.henshin(self.cherry_chain, kplan)
+                    # self.cherry_chain_h = sp.array([self.cherry_chain[temp] for temp in sp.arange(self.ntemps)])  # no se pq doble pero no lo voy a mirar
+                    self.ajuste_h = self.cherry_chain_h[sp.argmax(self.cherry_post)]
 
-            # TOP OF THE POSTERIOR
-            cherry_locat = sp.array([max(self.posteriors[temp]) - self.posteriors[temp]
-                                     < self.bayes_factor for temp in sp.arange(self.ntemps)])
-            self.cherry_chain = sp.array(
-                [self.sampler.flatchain[temp][cherry_locat[temp]] for temp in sp.arange(self.ntemps)])
-            self.cherry_post = sp.array(
-                [self.posteriors[temp][cherry_locat[temp]] for temp in range(self.ntemps)])
+                if self.MUSIC:
+                    thybiding.play()
 
-            # sigmas are taken from cold chain
-            self.sigmas = sp.array(
-                [sp.std(self.cherry_chain[0][:, i]) for i in range(self.theta.ndim_)])
+                # BIC & AIC
+                if self.RV:
+                    self.NEW_BIC = sp.log(self.ndat) * \
+                        self.theta.ndim_ - 2 * self.post_max
+                    self.OLD_BIC = sp.log(self.ndat) * \
+                        self.theta.ndim_ - 2 * self.oldlogpost
+                    self.NEW_AIC = 2 * self.theta.ndim_ - 2 * self.post_max
+                    self.OLD_AIC = 2 * - 2 * self.oldlogpost
+                if self.PM:
+                    self.NEW_BIC = sp.log(self.ndat_pm) * \
+                        self.theta.ndim_ - 2 * self.post_max
+                    self.OLD_BIC = sp.log(self.ndat_pm) * \
+                        self.theta.ndim_ - 2 * self.oldlogpost
+                    self.NEW_AIC = 2 * self.theta.ndim_ - 2 * self.post_max
+                    self.OLD_AIC = 2 * - 2 * self.oldlogpost
 
-            self.sample_sizes = sp.array(
-                [len(self.cherry_chain[i]) for i in range(self.ntemps)])
+                saveplace = self.mklogfile(kplan)
+                if self.VINES:  # saves chains, posteriors, rv data and log
+                    emplib.instigator(
+                        self.cherry_chain, self.cherry_post, self.all_data,
+                        saveplace
+                    )
 
-            # ojo esto
-            if self.RV and self.VINES:
-                '''
-                henshin actual asume los change of variable (cov) de hou
-                para todos los parametros... si fixeas cosas no respondo
-                '''
-                self.cherry_chain_h = sp.array(
-                    [empmir.henshin(self.cherry_chain[i], kplan) for i in sp.arange(self.ntemps)])
-                # self.cherry_chain_h = sp.array([self.cherry_chain[temp] for temp in sp.arange(self.ntemps)])  # no se pq doble pero no lo voy a mirar
-                self.ajuste_h = self.cherry_chain_h[0][sp.argmax(
-                    self.cherry_post[0])]
+                if self.MUSIC:
+                    thybiding.play()
 
-            # residuals = empmir.RV_residuals(ajuste, self.rv, self.time,
-                #self.ins, self.staract, self.starflag, kplan,
-                # self.nins, self.MOAV, self.totcornum, self.ACC)
-            #alt_res = self.alt_results(cherry_chain[0], kplan)
-            if self.MUSIC:
-                thybiding.play()
+                if self.INPLOT:
+                    pass
 
-        # 6 compare, exit or next
-            # BIC & AIC
-            if self.RV:
-                self.NEW_BIC = sp.log(self.ndat) * \
-                    self.theta.ndim_ - 2 * self.post_max
-                self.OLD_BIC = sp.log(self.ndat) * \
-                    self.theta.ndim_ - 2 * self.oldlogpost
-                self.NEW_AIC = 2 * self.theta.ndim_ - 2 * self.post_max
-                self.OLD_AIC = 2 * - 2 * self.oldlogpost
-            if self.PM:
-                self.NEW_BIC = sp.log(self.ndat_pm) * \
-                    self.theta.ndim_ - 2 * self.post_max
-                self.OLD_BIC = sp.log(self.ndat_pm) * \
-                    self.theta.ndim_ - 2 * self.oldlogpost
-                self.NEW_AIC = 2 * self.theta.ndim_ - 2 * self.post_max
-                self.OLD_AIC = 2 * - 2 * self.oldlogpost
+                if self.OLD_BIC - self.NEW_BIC < self.BIC:
+                    print(
+                        '\nBayes Information Criteria of %.2f requirement not met ! !' % self.BIC)
+                if self.OLD_AIC - self.NEW_AIC < self.AIC:
+                    print(
+                        '\nAkaike Information Criteria of %.2f requirement not met ! !' % self.AIC)
 
-            saveplace = self.mklogfile(kplan)
-            if self.VINES:  # saves chains, posteriors, rv data and log
-                emplib.instigator(
-                    self.cherry_chain, self.cherry_post, self.all_data,
-                    saveplace
-                )
+                print('Max logpost vs. Past max logpost', self.post_max,
+                      self.oldlogpost, self.post_max - self.oldlogpost)
+                print('Old BIC vs New BIC', self.OLD_BIC,
+                      self.NEW_BIC, self.OLD_BIC - self.NEW_BIC)
+                print('Old AIC vs New AIC', self.OLD_AIC,
+                      self.NEW_AIC, self.OLD_AIC - self.NEW_AIC)
 
-            if self.MUSIC:
-                thybiding.play()
+                if self.post_max - self.oldlogpost < self.model_comparison:
+                    print('\nBayes Factor of %.2f requirement not met ! !' %
+                          self.model_comparison)
+                    # break
 
-            if self.INPLOT:
-                pass
+                self.oldlogpost = self.post_max
 
-            if self.OLD_BIC - self.NEW_BIC < self.BIC:
-                print(
-                    '\nBayes Information Criteria of %.2f requirement not met ! !' % self.BIC)
-            if self.OLD_AIC - self.NEW_AIC < self.AIC:
-                print(
-                    '\nAkaike Information Criteria of %.2f requirement not met ! !' % self.AIC)
+            # 7 remodel prior, go back to step 2
 
-            print('Max logpost vs. Past max logpost', self.post_max,
-                  self.oldlogpost, self.post_max - self.oldlogpost)
-            print('Old BIC vs New BIC', self.OLD_BIC,
-                  self.NEW_BIC, self.OLD_BIC - self.NEW_BIC)
-            print('Old AIC vs New AIC', self.OLD_AIC,
-                  self.NEW_AIC, self.OLD_AIC - self.NEW_AIC)
-
-            if self.post_max - self.oldlogpost < self.model_comparison:
-                print('\nBayes Factor of %.2f requirement not met ! !' %
-                      self.model_comparison)
-                # break
-
-            self.oldlogpost = self.post_max
-
-        # 7 remodel prior, go back to step 2
-
-            self.constrain = [15.9, 84.1]
-            self.constrain = [30.15, 69.85]
-            self.constrain = [38.15, 61.85]
-            if kplan > 0:
-                for i in range(self.theta.ndim_):
-                    if (self.theta.list_[self.coordinator[i]].prior != 'fixed'
-                            and self.theta.list_[self.coordinator[i]].type == 'keplerian'):
-                        self.theta.list_[self.coordinator[i]].lims = sp.percentile(
-                            self.cherry_chain[0][:, i], self.constrain)
-                        #self.theta.list_[self.coordinator[i]].args = [ajuste[i], sigmas[i]]
-                        pass
-
-            # '''
-            kplan += 1
+                self.constrain = [15.9, 84.1]
+                self.constrain = [30.15, 69.85]
+                self.constrain = [38.15, 61.85]
+                if kplan > 0:
+                    for i in range(self.theta.ndim_):
+                        if (self.theta.list_[self.coordinator[i]].prior != 'fixed'
+                                and self.theta.list_[self.coordinator[i]].type == 'keplerian'):
+                            self.theta.list_[self.coordinator[i]].lims = sp.percentile(
+                                self.cherry_chain[:, i], self.constrain)
+                            pass
+                kplan += 1
 
         if self.MUSIC:  # end music
             technological_terror.play()

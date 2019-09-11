@@ -683,7 +683,7 @@ def dlogl_rv(theta, paramis):
     lnl = sp.sum(residuals ** 2 * inv_sigma2 - sp.log(inv_sigma2)) + sp.log(2*sp.pi) * ndat
     return -0.5 * lnl
 
-def dlogp(theta, params):
+def dlogp_rv(theta, params):
     _theta, ndim, C = params
     theta2 = sp.zeros(ndim)
     for j in range(ndim):

@@ -598,7 +598,7 @@ def neo_model_pm(t, ld_mod, ldn):
     return model, params
 
 
-def dlogl_rv(theta, paramis):
+def dlogl_rv(theta, paramis):# anticoor here too? DEL
     # PARAMS DEFINITIONS
     _t, AC, params = paramis
 
@@ -635,6 +635,7 @@ def dlogl_rv(theta, paramis):
             macoef[jj][i] = theta[jitpos + 2*(jj+1)]
             timescale[jj][i] = theta[jitpos + 2*(jj+1) + 1]
     a1 = (theta[:model_params])
+
 #    if kplanets > 0:
 #        raise Exception('destroy')
 
@@ -684,16 +685,19 @@ def dlogl_rv(theta, paramis):
     return -0.5 * lnl
 
 def dlogp_rv(theta, params):
+    #import pdb; pdb.set_trace()
     _theta, ndim, C = params
     theta2 = sp.zeros(ndim)
     for j in range(ndim):
         theta2[j] = dynesty_D[_theta[C[j]].prior](theta[j], _theta[C[j]].lims, _theta[C[j]].args)
-        if (_theta[C[j]].prior == 'uniform_spe_c' and
-            _theta[C[j+1]].prior != 'fixed'):
-            theta2[j] = dynesty_D['normal'](theta[j]**2+theta[j+1]**2, [0, 1], [0., 0.1**2])
-        if (_theta[C[j]].prior == 'uniform_spe_a' and
-            _theta[C[j+1]].prior != 'fixed'):
-            theta2[j] = dynesty_D['uniform'](theta[j]**2+theta[j+1]**2, _theta[C[j]].args, None)
+        # if (_theta[C[j]].prior == 'uniform_spe_c' and
+        #     _theta[C[j+1]].prior != 'fixed'):
+        #     theta2[j] = dynesty_D['normal'](theta[j]**2+theta[j+1]**2, [0, 1], [0., 0.1**2])
+        # if (_theta[C[j]].prior == 'uniform_spe_a' and
+        #     _theta[C[j+1]].prior != 'fixed'):
+        #     theta2[j] = dynesty_D['uniform'](theta[j]**2+theta[j+1]**2, _theta[C[j]].args, None)
+        if sp.isnan(theta2[j]):
+            raise Exception("NAN found")
     return theta2
 
 K = {'Constant': 1. ** 2,

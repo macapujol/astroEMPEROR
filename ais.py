@@ -170,7 +170,7 @@ class EMPIRE:
         self.RV = False
         self.PM = False
 
-        self.ENGINE = 'emcee'
+        self.ENGINE = 'dynesty'
 
         self.START = chrono.time()
         self.VINES = True  # jaja
@@ -764,8 +764,8 @@ class EMPIRE:
             nthreads = int(dynesty_nthreads)
             with contextlib.closing(multiprocessing.Pool(processes=nthreads)) as executor:
                 self.sampler = dynesty.NestedSampler(logl, logp, ndim,
-                ptform_args=[empmir.dlogp_rv,logp_params],
-                logl_arfs=[empmir.dlogl_rv,logl_params], nlive=200, bound='multi',
+                ptform_args=[empmir.dlogp_rv, logp_params],
+                logl_args=[empmir.dlogl_rv, logl_params], nlive = 200, bound='multi',
                 sample='rwalk',pool=executor,queue_size=nthreads
                 )
                 self.sampler.run_nested(dlogz=0.1)
@@ -1074,6 +1074,7 @@ class EMPIRE:
             sigmas, sigmas_raw = sp.zeros(
                 self.theta.ndim_), sp.zeros(self.theta.ndim_)
             if self.ENGINE == 'emcee':
+                print('fgjk')
                 self.MCMC(self.pos0, kplan, sigmas_raw, logl, logp)
                 self.posteriors = sp.array(
                     [self.sampler.lnprobability[i].reshape(-1) for i in range(self.ntemps)])
@@ -1186,6 +1187,7 @@ class EMPIRE:
                 kplan += 1
 
             if self.ENGINE == 'dynesty':
+                print('yay')
                 self.dynesty(self.pos0, kplan, sigmas_raw, logl, logp)
                 results = self.sampler.results
                 filename = 'dynestyfile.pkl'
@@ -1308,7 +1310,7 @@ em.betas = None
 #em.RAW = True
 #em.ACC = 1
 em.MOAV = sp.array([0, 0])  # not needed
-
+em.ENGINE = "dynesty"
 
 #em.batman_ld = ['quadratic']
 #em.gaussian_processor = 'george'
